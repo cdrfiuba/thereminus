@@ -1,6 +1,20 @@
-/**
- * from cdrfiuba/picopico
- * */
+enum playingModes {CONTINUOUS, QUANTIZED};
+const byte INITIAL_PLAYING_MODE = QUANTIZED;
+byte playingMode = INITIAL_PLAYING_MODE;
+
+enum scales {CHROMATIC, C_PENTATONIC};
+const byte INITIAL_QUANTIZED_MODE_SCALE = C_PENTATONIC;
+byte quantizedModeScale = INITIAL_QUANTIZED_MODE_SCALE;
+
+const int MIN_DISTANCE = 1;
+const int MAX_DISTANCE = 100;
+
+const byte CONTINUOUS_MODE_VOLUME = 8; // from 0 to 15
+const byte QUANTIZED_MODE_VELOCITY = 64; // from 0 to 127
+const int CONTINUOUS_MODE_BASE_FREQ = 800;
+const int PIN_BUTTON = 9;
+const int PIN_LED = 13;
+
 char debugStringBuffer[60];
 bool debugMode = true;
 // sprintf + serial of 20 bytes takes ~200us
@@ -12,7 +26,9 @@ bool debugMode = true;
     Serial.print(debugStringBuffer); \
   }
 
-const int PIN_LED = 13;
+/**
+ * from cdrfiuba/picopico
+ * */
 
 #define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
 #define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
@@ -68,7 +84,7 @@ ISR(TIMER0_COMPA_vect) {
 void sound_generation() {
     // tick counter for time keeping
     timer0_tick++;
-    if (timer0_tick > 333) { // 333 = 16.65ms, 111 = 5.55ms
+    if (timer0_tick > 111) { // 333 = 16.65ms, 111 = 5.55ms
         timer0_tick = 0;
         // if the tick counter fires before the last tick was completed,
         // while still playing, toggle the led
@@ -78,7 +94,7 @@ void sound_generation() {
         // ticks and big ticks (every 1 second)
         nextTick = true;
         ticks++;
-        if (ticks > 60) { // 16.65ms * 60 = 999ms
+        if (ticks > 180) { // 16.65ms * 60 = 999ms
             ticks = 0;
             nextBigTick = true;
             digitalWrite(PIN_LED, abs(digitalRead(PIN_LED) - 1));
@@ -167,7 +183,7 @@ enum Sonars {
   A = 0,
   B = 1,
   C = 2,
-  NUM_SONARS = 3,
+  NUM_SONARS = 1,
 };
 Sonar sonar[NUM_SONARS];
 int next_sonar = A;
@@ -251,13 +267,13 @@ void setup() {
 
   cli();
 
-  // from dreamster-lib
+  // from dreamster/dreamster-lib
   sonar[A].trigger_pin = 0;
   sonar[A].echo_pin = 1;
-  sonar[B].trigger_pin = 2;
-  sonar[B].echo_pin = 3;
-  sonar[C].trigger_pin = 4;
-  sonar[C].echo_pin = 5;
+  // sonar[B].trigger_pin = 2;
+  // sonar[B].echo_pin = 3;
+  // sonar[C].trigger_pin = 4;
+  // sonar[C].echo_pin = 5;
 
   for (int i = 0; i < NUM_SONARS; i++) {
     pinMode(sonar[i].trigger_pin, OUTPUT);
@@ -271,7 +287,7 @@ void setup() {
   OCR3A = 57;                    // Set interrupt every 58us (115)
   TIMSK3 |= (1<<OCIE3A);         // Enable Timer3 interrupt.
 
-  // from picopico
+  // from cdrfiuba/picopico
   // TCCR1A => COM1A1 COM1A0 COM1B1 COM1B0 – – WGM11 WGM10
   // TCCR1B => ICNC1 ICES1 – WGM13 WGM12 CS12 CS11 CS10
 
@@ -320,50 +336,105 @@ void setup() {
 }
 
 void loop() {
-  if (!nextTick) return;
+  if (!nextTick) {
+    return;   
+  }
   nextTick = false;
 
-  // play sound according to distance
-  for (int i = 0; i < NUM_SONARS; i++) {
-    if (sonar[i].distance >= 30) {
+  if (playingMode == CONTINUOUS) {
+    // play sound according to distance, focusing on a small octave range, 
+    // but with a lot of precision, to emulate a true theremin
+    for (int i = 0; i < NUM_SONARS; i++) {
+      voices[i].amp = 0;
+      if (sonar[i].distance < MIN_DISTANCE || sonar[i].distance > MAX_DISTANCE) continue;
       Voice* v = &voices[i];
-      v->amp = 0;
+
+      v->amp = amp[CONTINUOUS_MODE_VOLUME];
+      // multiplying the usable range (from 0 to 60, or from 0 to 100) by 16 
+      // provides approximately one octave of continuous sound, going from 
+      // around 250Hz to 500Hz when setting the base freq to 800
+      v->freq = CONTINUOUS_MODE_BASE_FREQ + (MAX_DISTANCE - sonar[i].distance) * 16;
+      
+      // reduce volume if far
+      int distanceFromMax = MAX_DISTANCE - sonar[i].distance;
+      if (distanceFromMax < CONTINUOUS_MODE_VOLUME) {
+        v->amp = amp[distanceFromMax];
+      }
     }
-    if (sonar[i].distance > 0 && sonar[i].distance < 60) {
+  }
+
+  if (playingMode == QUANTIZED) {
+    byte midiNote;
+    // play sound according to distance
+    for (int i = 0; i < NUM_SONARS; i++) {
+      // when outside the range, mute sound and proceed to next sonar
+      if (sonar[i].distance < MIN_DISTANCE || sonar[i].distance > MAX_DISTANCE) {
+        voices[i].amp = 0;
+        continue;
+      }
+      
+      if (quantizedModeScale == CHROMATIC) {
+        // reduce range to 60 notes, lower notes far, higher notes near
+        midiNote = map(sonar[i].distance, MIN_DISTANCE, MAX_DISTANCE, 90, 30);
+      }
+      if (quantizedModeScale == C_PENTATONIC) {
+        midiNote = map(sonar[i].distance, MIN_DISTANCE, MAX_DISTANCE, 9, 0);
+        if (midiNote == 0) midiNote = 57;
+        if (midiNote == 1) midiNote = 60;
+        if (midiNote == 2) midiNote = 62;
+        if (midiNote == 3) midiNote = 65;
+        if (midiNote == 4) midiNote = 67;
+        if (midiNote == 5) midiNote = 69;
+        if (midiNote == 6) midiNote = 72;
+        if (midiNote == 7) midiNote = 74;
+        if (midiNote == 8) midiNote = 77;
+        if (midiNote == 9) midiNote = 79;
+      }
+      
+      // voice/note configuration
       Voice* v = &voices[i];
-
-      byte midiNote = map(sonar[i].distance, 0, 60, 90, 30);
-
-      /*
-      // pentatonic scale
-      byte midiNote = map(sonar[i].distance, 0, 60, 9, 0);
-      if (midiNote == 0) midiNote = 57;
-      if (midiNote == 1) midiNote = 60;
-      if (midiNote == 2) midiNote = 62;
-      if (midiNote == 3) midiNote = 65;
-      if (midiNote == 4) midiNote = 67;
-      if (midiNote == 5) midiNote = 69;
-      if (midiNote == 6) midiNote = 72;
-      if (midiNote == 7) midiNote = 74;
-      if (midiNote == 8) midiNote = 77;
-      if (midiNote == 9) midiNote = 79;
-      */
-
-      byte velocity = 64;
       v->octave = ((midiNote - midiNote % 12) / 12) - 1;
       v->note = ((midiNote % 12) + 2) - 2;
-      v->volume = velocity / 8;
+      v->volume = QUANTIZED_MODE_VELOCITY / 8;
       if (v->volume > 15) v->volume = 15;
       v->amp = amp[v->volume];
       v->freq = scale[v->note] >> (8 - (v->octave % 8));
     }
   }
 
-  // debug
   for (int i = 0; i < NUM_SONARS; i++) {
-    serialDebug("%.2d(%.4d) ", i, sonar[i].distance);
+    serialDebug("%.2d %.4d ", i, sonar[i].distance);
   }
-  serialDebug("%.6u", timer0_tick);
   serialDebug("\n");
+  
+  // if (isButtonPressed(PIN_BUTTON, LOW)) {
+    // if (playingMode == CONTINUOUS) {
+      // playingMode = QUANTIZED;
+    // } else if (playingMode == QUANTIZED) {
+      // playingMode = CONTINUOUS;
+    // }
+  // }
+  
+  // when not sending serial data, wait a very small time,
+  // or else loop() doesn't run
+  if (!debugMode) {
+    _delay_us(1);
+  }
+}
 
+inline bool isButtonPressed (int pinButton, int buttonPressedValue, bool waitForRelease = true) {
+  // detect button press (and maybe release)
+  if (digitalRead(pinButton) == buttonPressedValue) {
+    // debounce and recheck
+    _delay_ms(5);
+    if (digitalRead(pinButton) == buttonPressedValue) {
+      if (waitForRelease) {
+        while (digitalRead(pinButton) == buttonPressedValue); // wait for release
+        // button releases, continue
+      }
+      // confirmed that button was pressed
+      return true;
+    }
+  }
+  return false;
 }

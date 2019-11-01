@@ -3,17 +3,25 @@ const byte INITIAL_PLAYING_MODE = QUANTIZED;
 byte playingMode = INITIAL_PLAYING_MODE;
 
 enum scales {CHROMATIC, C_PENTATONIC};
-const byte INITIAL_QUANTIZED_MODE_SCALE = C_PENTATONIC;
+const byte INITIAL_QUANTIZED_MODE_SCALE = CHROMATIC;
 byte quantizedModeScale = INITIAL_QUANTIZED_MODE_SCALE;
 
+const int PIN_BUTTON = 9;
+const int PIN_LED = 13;
 const int MIN_DISTANCE = 1;
 const int MAX_DISTANCE = 100;
-
 const byte CONTINUOUS_MODE_VOLUME = 8; // from 0 to 15
 const byte QUANTIZED_MODE_VELOCITY = 64; // from 0 to 127
 const int CONTINUOUS_MODE_BASE_FREQ = 800;
-const int PIN_BUTTON = 9;
-const int PIN_LED = 13;
+const int NOTES_IN_FULL_DISTANCE = 10;
+const int HYSTERESIS_IN_CM = 5;
+// const int NUM_RANGES = ceil((MAX_DISTANCE - MIN_DISTANCE) / NOTES_IN_FULL_DISTANCE);
+const int MIDI_BASE_NOTE = 57;
+
+int rangeUp;
+int rangeDown;
+int previousRangeUp;
+int previousRangeDown;
 
 char debugStringBuffer[60];
 bool debugMode = true;
@@ -364,7 +372,7 @@ void loop() {
   }
 
   if (playingMode == QUANTIZED) {
-    byte midiNote;
+    byte midiNote = 0;
     // play sound according to distance
     for (int i = 0; i < NUM_SONARS; i++) {
       // when outside the range, mute sound and proceed to next sonar
@@ -376,6 +384,33 @@ void loop() {
       if (quantizedModeScale == CHROMATIC) {
         // reduce range to 60 notes, lower notes far, higher notes near
         midiNote = map(sonar[i].distance, MIN_DISTANCE, MAX_DISTANCE, 90, 30);
+
+        /*
+        rangeUp = sonar[i].distance % NOTES_IN_FULL_DISTANCE;
+        rangeDown = (sonar[i].distance - HYSTERESIS_IN_CM) % NOTES_IN_FULL_DISTANCE;
+        
+        // set hysteresis as a range going from bottom to top or from top to bottom.
+        // each zone determines the current note, which can only be changed
+        // when surpassing the hysteresis zone
+        // >> 11111111 22222222 33333333 44444444 >>
+        //    --1-- ?? --2-- ?? --3-- ?? --4-- ??
+        // << 11111 22222222 33333333 44444444 55 <<
+        
+        if (rangeUp == rangeDown) {
+          midiNote = MIDI_BASE_NOTE + rangeUp;
+        } else {
+          if (rangeUp == previousRangeUp) {
+            midiNote = MIDI_BASE_NOTE + rangeUp;
+          } else if (rangeDown == previousRangeDown) {
+            midiNote = MIDI_BASE_NOTE + rangeDown;
+          }
+        }
+        serialDebug("%.2d %.2d %.2d %.2d %.2d\n", rangeUp, previousRangeUp, rangeDown, previousRangeDown, midiNote);
+        
+        previousRangeUp = rangeUp;
+        previousRangeDown = rangeDown;
+        
+        */
       }
       if (quantizedModeScale == C_PENTATONIC) {
         midiNote = map(sonar[i].distance, MIN_DISTANCE, MAX_DISTANCE, 9, 0);
@@ -402,10 +437,10 @@ void loop() {
     }
   }
 
-  for (int i = 0; i < NUM_SONARS; i++) {
-    serialDebug("%.2d %.4d ", i, sonar[i].distance);
-  }
-  serialDebug("\n");
+  // for (int i = 0; i < NUM_SONARS; i++) {
+    // serialDebug("%.2d %.4d ", i, sonar[i].distance);
+  // }
+  // serialDebug("\n");
   
   // if (isButtonPressed(PIN_BUTTON, LOW)) {
     // if (playingMode == CONTINUOUS) {

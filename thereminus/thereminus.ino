@@ -2,8 +2,8 @@ enum playingModes {CONTINUOUS, QUANTIZED};
 const byte INITIAL_PLAYING_MODE = QUANTIZED;
 byte playingMode = INITIAL_PLAYING_MODE;
 
-enum scales {CHROMATIC, C_PENTATONIC};
-const byte INITIAL_QUANTIZED_MODE_SCALE = CHROMATIC;
+enum scales {CHROMATIC, C_PENTATONIC, A_MAJOR};
+const byte INITIAL_QUANTIZED_MODE_SCALE = A_MAJOR;
 byte quantizedModeScale = INITIAL_QUANTIZED_MODE_SCALE;
 
 const int PIN_BUTTON = 9;
@@ -13,15 +13,15 @@ const int MAX_DISTANCE = 100;
 const byte CONTINUOUS_MODE_VOLUME = 8; // from 0 to 15
 const byte QUANTIZED_MODE_VELOCITY = 64; // from 0 to 127
 const int CONTINUOUS_MODE_BASE_FREQ = 800;
-const int NOTES_IN_FULL_DISTANCE = 10;
-const int HYSTERESIS_IN_CM = 5;
-// const int NUM_RANGES = ceil((MAX_DISTANCE - MIN_DISTANCE) / NOTES_IN_FULL_DISTANCE);
+const int HYSTERESIS_IN_CM = 3;
+const int NOTE_DIVISIONS = HYSTERESIS_IN_CM + 1;
+const int NUM_NOTES = ceil((MAX_DISTANCE - MIN_DISTANCE) / NOTE_DIVISIONS);
 const int MIDI_BASE_NOTE = 57;
 
-int rangeUp;
-int rangeDown;
-int previousRangeUp;
-int previousRangeDown;
+byte rangeUp;
+byte rangeDown;
+byte midiNote = 0;
+byte previousMidiNote = 0;
 
 char debugStringBuffer[60];
 bool debugMode = true;
@@ -270,6 +270,24 @@ ISR(TIMER3_COMPA_vect) {
   sonar_timer_callback();
 }
 
+
+bool isButtonPressed (int pinButton, int buttonPressedValue, bool waitForRelease = true) {
+  // detect button press (and maybe release)
+  if (digitalRead(pinButton) == buttonPressedValue) {
+    
+    // debounce and recheck
+    _delay_ms(5);
+    if (digitalRead(pinButton) == buttonPressedValue) {
+      if (waitForRelease) {
+        while (digitalRead(pinButton) == buttonPressedValue); // wait for release
+        // button releases, continue
+      }
+      // confirmed that button was pressed
+      return true;
+    }
+  }
+  return false;
+}
 void setup() {
   Serial.begin(115200);
 
@@ -372,7 +390,6 @@ void loop() {
   }
 
   if (playingMode == QUANTIZED) {
-    byte midiNote = 0;
     // play sound according to distance
     for (int i = 0; i < NUM_SONARS; i++) {
       // when outside the range, mute sound and proceed to next sonar
@@ -380,37 +397,27 @@ void loop() {
         voices[i].amp = 0;
         continue;
       }
-      
-      if (quantizedModeScale == CHROMATIC) {
-        // reduce range to 60 notes, lower notes far, higher notes near
-        midiNote = map(sonar[i].distance, MIN_DISTANCE, MAX_DISTANCE, 90, 30);
 
-        /*
-        rangeUp = sonar[i].distance % NOTES_IN_FULL_DISTANCE;
-        rangeDown = (sonar[i].distance - HYSTERESIS_IN_CM) % NOTES_IN_FULL_DISTANCE;
-        
-        // set hysteresis as a range going from bottom to top or from top to bottom.
-        // each zone determines the current note, which can only be changed
-        // when surpassing the hysteresis zone
-        // >> 11111111 22222222 33333333 44444444 >>
-        //    --1-- ?? --2-- ?? --3-- ?? --4-- ??
-        // << 11111 22222222 33333333 44444444 55 <<
-        
-        if (rangeUp == rangeDown) {
-          midiNote = MIDI_BASE_NOTE + rangeUp;
-        } else {
-          if (rangeUp == previousRangeUp) {
-            midiNote = MIDI_BASE_NOTE + rangeUp;
-          } else if (rangeDown == previousRangeDown) {
-            midiNote = MIDI_BASE_NOTE + rangeDown;
-          }
-        }
-        serialDebug("%.2d %.2d %.2d %.2d %.2d\n", rangeUp, previousRangeUp, rangeDown, previousRangeDown, midiNote);
-        
-        previousRangeUp = rangeUp;
-        previousRangeDown = rangeDown;
-        
-        */
+      // set hysteresis as a range going from bottom to top or from top to bottom.
+      // each zone determines the current note, which can only be changed
+      // when surpassing the hysteresis zone
+      // >> 11111111 22222222 33333333 44444444 >>
+      //    --1-- ?? --2-- ?? --3-- ?? --4-- ??
+      // << 11111 22222222 33333333 44444444 55 <<
+      
+      rangeUp = ceil(sonar[i].distance / NOTE_DIVISIONS);
+      rangeDown = ceil((sonar[i].distance + HYSTERESIS_IN_CM) / NOTE_DIVISIONS);
+      
+      if (rangeUp == rangeDown) {
+        midiNote = MIDI_BASE_NOTE + rangeUp;
+      }
+      if (abs(midiNote - previousMidiNote) >= 2) {
+        midiNote = MIDI_BASE_NOTE + rangeUp;
+      }
+      previousMidiNote = MIDI_BASE_NOTE + rangeUp;
+
+      if (quantizedModeScale == CHROMATIC) {
+        //  no restrictions
       }
       if (quantizedModeScale == C_PENTATONIC) {
         midiNote = map(sonar[i].distance, MIN_DISTANCE, MAX_DISTANCE, 9, 0);
@@ -425,6 +432,20 @@ void loop() {
         if (midiNote == 8) midiNote = 77;
         if (midiNote == 9) midiNote = 79;
       }
+      if (quantizedModeScale == A_MAJOR) {
+        const int NOTES[NUM_NOTES] = {
+          42, 44, 45, 47, 49, 50, 52, 
+          54, 56, 57, 59, 61, 62, 64, 
+          66, 68, 69, 71, 73, 74, 76,
+          78, 80, 81
+        };
+        const byte index = midiNote - MIDI_BASE_NOTE;
+        // serialDebug("%d\n", index);
+        if (index < NUM_NOTES) {
+          midiNote = NOTES[index];
+        }
+      }
+      // serialDebug("%.2d %.2d %.2d %.2d\n", rangeUp, rangeDown, midiNote, sonar[i].distance);
       
       // voice/note configuration
       Voice* v = &voices[i];
@@ -445,9 +466,17 @@ void loop() {
   // if (isButtonPressed(PIN_BUTTON, LOW)) {
     // if (playingMode == CONTINUOUS) {
       // playingMode = QUANTIZED;
-    // } else if (playingMode == QUANTIZED) {
+    // } else if (playingMode == QUANTIZED && quantizedModeScale == A_MAJOR) {
       // playingMode = CONTINUOUS;
+      // quantizedModeScale = CHROMATIC;
+    // } else if (playingMode == QUANTIZED && quantizedModeScale == CHROMATIC) {
+      // playingMode = CONTINUOUS;
+      // quantizedModeScale = C_PENTATONIC;
+    // } else if (playingMode == QUANTIZED && quantizedModeScale == C_PENTATONIC) {
+      // playingMode = CONTINUOUS;
+      // quantizedModeScale = A_MAJOR;
     // }
+    // serialDebug("BUTTON\n");
   // }
   
   // when not sending serial data, wait a very small time,
@@ -455,21 +484,4 @@ void loop() {
   if (!debugMode) {
     _delay_us(1);
   }
-}
-
-inline bool isButtonPressed (int pinButton, int buttonPressedValue, bool waitForRelease = true) {
-  // detect button press (and maybe release)
-  if (digitalRead(pinButton) == buttonPressedValue) {
-    // debounce and recheck
-    _delay_ms(5);
-    if (digitalRead(pinButton) == buttonPressedValue) {
-      if (waitForRelease) {
-        while (digitalRead(pinButton) == buttonPressedValue); // wait for release
-        // button releases, continue
-      }
-      // confirmed that button was pressed
-      return true;
-    }
-  }
-  return false;
 }

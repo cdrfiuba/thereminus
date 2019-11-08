@@ -6,13 +6,16 @@ enum scales {CHROMATIC, C_PENTATONIC, A_MAJOR};
 const byte INITIAL_QUANTIZED_MODE_SCALE = A_MAJOR;
 byte quantizedModeScale = INITIAL_QUANTIZED_MODE_SCALE;
 
+const byte INITIAL_NOTE_JUMP_DISTANCE = 2;
+byte noteJumpDistance = INITIAL_NOTE_JUMP_DISTANCE;
+
 const int PIN_BUTTON = 9;
 const int PIN_LED = 13;
 const int MIN_DISTANCE = 1;
 const int MAX_DISTANCE = 100;
 const byte CONTINUOUS_MODE_VOLUME = 8; // from 0 to 15
 const byte QUANTIZED_MODE_VELOCITY = 64; // from 0 to 127
-const int CONTINUOUS_MODE_BASE_FREQ = 800;
+const int CONTINUOUS_MODE_MAX_FREQ = 2400;
 const int HYSTERESIS_IN_CM = 3;
 const int NOTE_DIVISIONS = HYSTERESIS_IN_CM + 1;
 const int NUM_NOTES = ceil((MAX_DISTANCE - MIN_DISTANCE) / NOTE_DIVISIONS);
@@ -270,26 +273,32 @@ ISR(TIMER3_COMPA_vect) {
   sonar_timer_callback();
 }
 
-
-bool isButtonPressed (int pinButton, int buttonPressedValue, bool waitForRelease = true) {
-  // detect button press (and maybe release)
-  if (digitalRead(pinButton) == buttonPressedValue) {
+bool isButtonPressed (int pinButton, int buttonPressedValue = LOW, bool waitForRelease = false) {
+  static int buttonPressed = false;
     
-    // debounce and recheck
-    _delay_ms(5);
-    if (digitalRead(pinButton) == buttonPressedValue) {
-      if (waitForRelease) {
-        while (digitalRead(pinButton) == buttonPressedValue); // wait for release
-        // button releases, continue
+  // detect button press (and optionally wait for release)
+  if (digitalRead(pinButton) == buttonPressedValue) {
+    _delay_ms(5); // debounce
+    if (buttonPressed) return false;
+
+    buttonPressed = true;
+    if (waitForRelease) {
+      while (digitalRead(pinButton) == buttonPressedValue) {
+        // wait for release
+        _delay_ms(5);
       }
-      // confirmed that button was pressed
-      return true;
+      // button releases, continue
     }
+    // confirmed that button was pressed
+    return true;
   }
+  buttonPressed = false;
   return false;
 }
 void setup() {
   Serial.begin(115200);
+
+  pinMode(PIN_BUTTON, INPUT_PULLUP);
 
   cli();
 
@@ -373,19 +382,23 @@ void loop() {
     for (int i = 0; i < NUM_SONARS; i++) {
       voices[i].amp = 0;
       if (sonar[i].distance < MIN_DISTANCE || sonar[i].distance > MAX_DISTANCE) continue;
+      
       Voice* v = &voices[i];
 
       v->amp = amp[CONTINUOUS_MODE_VOLUME];
       // multiplying the usable range (from 0 to 60, or from 0 to 100) by 16 
       // provides approximately one octave of continuous sound, going from 
       // around 250Hz to 500Hz when setting the base freq to 800
-      v->freq = CONTINUOUS_MODE_BASE_FREQ + (MAX_DISTANCE - sonar[i].distance) * 16;
+      int32_t freq = CONTINUOUS_MODE_MAX_FREQ - (sonar[i].distance) * 16;
+      if (freq < 0) freq = 0;
+      v->freq = (uint16_t)freq;
       
       // reduce volume if far
       int distanceFromMax = MAX_DISTANCE - sonar[i].distance;
       if (distanceFromMax < CONTINUOUS_MODE_VOLUME) {
         v->amp = amp[distanceFromMax];
       }
+      serialDebug("%.4d %.2d\n", v->freq, sonar[i].distance);
     }
   }
 
@@ -397,6 +410,7 @@ void loop() {
         voices[i].amp = 0;
         continue;
       }
+      
 
       // set hysteresis as a range going from bottom to top or from top to bottom.
       // each zone determines the current note, which can only be changed
@@ -405,13 +419,17 @@ void loop() {
       //    --1-- ?? --2-- ?? --3-- ?? --4-- ??
       // << 11111 22222222 33333333 44444444 55 <<
       
+      // set range that skips the hysteresis to allow for faster response times
+      if (quantizedModeScale == CHROMATIC) noteJumpDistance = 2;
+      if (quantizedModeScale == A_MAJOR) noteJumpDistance = 4;
+      
       rangeUp = ceil(sonar[i].distance / NOTE_DIVISIONS);
       rangeDown = ceil((sonar[i].distance + HYSTERESIS_IN_CM) / NOTE_DIVISIONS);
       
       if (rangeUp == rangeDown) {
         midiNote = MIDI_BASE_NOTE + rangeUp;
       }
-      if (abs(midiNote - previousMidiNote) >= 2) {
+      if (abs(midiNote - previousMidiNote) >= noteJumpDistance) {
         midiNote = MIDI_BASE_NOTE + rangeUp;
       }
       previousMidiNote = MIDI_BASE_NOTE + rangeUp;
@@ -445,7 +463,7 @@ void loop() {
           midiNote = NOTES[index];
         }
       }
-      // serialDebug("%.2d %.2d %.2d %.2d\n", rangeUp, rangeDown, midiNote, sonar[i].distance);
+      serialDebug("%.2d %.2d %.2d %.2d\n", rangeUp, rangeDown, midiNote, sonar[i].distance);
       
       // voice/note configuration
       Voice* v = &voices[i];
@@ -463,21 +481,26 @@ void loop() {
   // }
   // serialDebug("\n");
   
-  // if (isButtonPressed(PIN_BUTTON, LOW)) {
-    // if (playingMode == CONTINUOUS) {
-      // playingMode = QUANTIZED;
-    // } else if (playingMode == QUANTIZED && quantizedModeScale == A_MAJOR) {
-      // playingMode = CONTINUOUS;
-      // quantizedModeScale = CHROMATIC;
-    // } else if (playingMode == QUANTIZED && quantizedModeScale == CHROMATIC) {
-      // playingMode = CONTINUOUS;
-      // quantizedModeScale = C_PENTATONIC;
-    // } else if (playingMode == QUANTIZED && quantizedModeScale == C_PENTATONIC) {
-      // playingMode = CONTINUOUS;
-      // quantizedModeScale = A_MAJOR;
-    // }
-    // serialDebug("BUTTON\n");
-  // }
+  if (isButtonPressed(PIN_BUTTON)) {
+    serialDebug("new playing mode: ");
+    if (playingMode == CONTINUOUS) {
+      playingMode = QUANTIZED;
+      quantizedModeScale = CHROMATIC;
+      serialDebug("quantized - chromatic");
+    } else if (playingMode == QUANTIZED && quantizedModeScale == CHROMATIC) {
+      playingMode = QUANTIZED;
+      quantizedModeScale = C_PENTATONIC;
+      serialDebug("quantized - C pentatonic");
+    } else if (playingMode == QUANTIZED && quantizedModeScale == C_PENTATONIC) {
+      playingMode = QUANTIZED;
+      quantizedModeScale = A_MAJOR;
+      serialDebug("quantized - A major");
+    } else if (playingMode == QUANTIZED && quantizedModeScale == A_MAJOR) {
+      playingMode = CONTINUOUS;
+      serialDebug("continuous");
+    }
+    serialDebug("\n");
+  }
   
   // when not sending serial data, wait a very small time,
   // or else loop() doesn't run

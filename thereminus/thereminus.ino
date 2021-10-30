@@ -1,9 +1,9 @@
 enum playingModes {CONTINUOUS, QUANTIZED};
-const byte INITIAL_PLAYING_MODE = QUANTIZED;
+const byte INITIAL_PLAYING_MODE = CONTINUOUS;
 byte playingMode = INITIAL_PLAYING_MODE;
 
 enum scales {CHROMATIC, C_PENTATONIC, A_MAJOR};
-const byte INITIAL_QUANTIZED_MODE_SCALE = A_MAJOR;
+const byte INITIAL_QUANTIZED_MODE_SCALE = CHROMATIC;
 byte quantizedModeScale = INITIAL_QUANTIZED_MODE_SCALE;
 
 const byte INITIAL_NOTE_JUMP_DISTANCE = 2;
@@ -194,7 +194,7 @@ enum Sonars {
   A = 0,
   B = 1,
   C = 2,
-  NUM_SONARS = 1,
+  NUM_SONARS = 2,
 };
 Sonar sonar[NUM_SONARS];
 int next_sonar = A;
@@ -305,8 +305,8 @@ void setup() {
   // from dreamster/dreamster-lib
   sonar[A].trigger_pin = 0;
   sonar[A].echo_pin = 1;
-  // sonar[B].trigger_pin = 2;
-  // sonar[B].echo_pin = 3;
+  sonar[B].trigger_pin = 2;
+  sonar[B].echo_pin = 3;
   // sonar[C].trigger_pin = 4;
   // sonar[C].echo_pin = 5;
 

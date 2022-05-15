@@ -278,16 +278,21 @@ bool isButtonPressed (int pinButton, int buttonPressedValue = LOW, bool waitForR
     
   // detect button press (and optionally wait for release)
   if (digitalRead(pinButton) == buttonPressedValue) {
-    _delay_ms(5); // debounce
     if (buttonPressed) return false;
-
     buttonPressed = true;
+
+    _delay_ms(100); // debounce
     if (waitForRelease) {
       while (digitalRead(pinButton) == buttonPressedValue) {
         // wait for release
-        _delay_ms(5);
+        _delay_ms(100);
       }
+      _delay_ms(10);
       // button releases, continue
+    } else {
+      if (digitalRead(pinButton) == buttonPressedValue) {
+        return true;
+      }
     }
     // confirmed that button was pressed
     return true;
@@ -421,7 +426,6 @@ void loop() {
       
       // set range that skips the hysteresis to allow for faster response times
       if (quantizedModeScale == CHROMATIC) noteJumpDistance = 2;
-      if (quantizedModeScale == A_MAJOR) noteJumpDistance = 4;
       
       rangeUp = ceil(sonar[i].distance / NOTE_DIVISIONS);
       rangeDown = ceil((sonar[i].distance + HYSTERESIS_IN_CM) / NOTE_DIVISIONS);
@@ -451,17 +455,14 @@ void loop() {
         if (midiNote == 9) midiNote = 79;
       }
       if (quantizedModeScale == A_MAJOR) {
+        const int index = map(sonar[i].distance, MIN_DISTANCE, MAX_DISTANCE, NUM_NOTES - 1, 0);
         const int NOTES[NUM_NOTES] = {
           42, 44, 45, 47, 49, 50, 52, 
           54, 56, 57, 59, 61, 62, 64, 
           66, 68, 69, 71, 73, 74, 76,
           78, 80, 81
         };
-        const byte index = midiNote - MIDI_BASE_NOTE;
-        // serialDebug("%d\n", index);
-        if (index < NUM_NOTES) {
-          midiNote = NOTES[index];
-        }
+        midiNote = NOTES[index];
       }
       serialDebug("%.2d %.2d %.2d %.2d\n", rangeUp, rangeDown, midiNote, sonar[i].distance);
       
@@ -481,7 +482,7 @@ void loop() {
   // }
   // serialDebug("\n");
   
-  if (isButtonPressed(PIN_BUTTON)) {
+  if (isButtonPressed(PIN_BUTTON, LOW, true)) {
     serialDebug("new playing mode: ");
     if (playingMode == CONTINUOUS) {
       playingMode = QUANTIZED;

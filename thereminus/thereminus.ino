@@ -37,6 +37,27 @@ bool debugMode = true;
     Serial.print(debugStringBuffer); \
   }
 
+// for led cube
+const int COLUMN1_PIN = A0;
+const int COLUMN2_PIN = A1;
+const int COLUMN3_PIN = A2;
+const int COLUMN4_PIN = A3;
+const int COLUMN5_PIN = A4;
+const int COLUMN6_PIN = A5;
+const int COLUMN7_PIN = 2;
+const int COLUMN8_PIN = 3;
+const int COLUMN9_PIN = 4;
+const int ROW1_PIN = 5;
+const int ROW2_PIN = 6;
+const int ROW3_PIN = 7;
+
+#define ColumnOn(N) digitalWrite(COLUMN ## N ## _PIN, LOW);
+#define ColumnOff(N) digitalWrite(COLUMN ## N ## _PIN, HIGH);
+#define RowOn(N) digitalWrite(ROW ## N ## _PIN, LOW);
+#define RowOff(N) digitalWrite(ROW ## N ## _PIN, HIGH);
+#define ColumnsOff() ColumnOff(1);ColumnOff(2);ColumnOff(3);ColumnOff(4);ColumnOff(5);ColumnOff(6);ColumnOff(7);ColumnOff(8);ColumnOff(9);
+int cubeled_state = 0;
+
 /**
  * from cdrfiuba/picopico
  * */
@@ -105,7 +126,7 @@ void sound_generation() {
         // ticks and big ticks (every 1 second)
         nextTick = true;
         ticks++;
-        if (ticks > 180) { // 16.65ms * 60 = 999ms
+        if (ticks > 27) { // 5.55ms * 27 = 149.85ms
             ticks = 0;
             nextBigTick = true;
             digitalWrite(PIN_LED, abs(digitalRead(PIN_LED) - 1));
@@ -194,7 +215,7 @@ enum Sonars {
   A = 0,
   B = 1,
   C = 2,
-  NUM_SONARS = 2,
+  NUM_SONARS = 1,
 };
 Sonar sonar[NUM_SONARS];
 int next_sonar = A;
@@ -281,7 +302,7 @@ bool isButtonPressed (int pinButton, int buttonPressedValue = LOW, bool waitForR
     if (buttonPressed) return false;
     buttonPressed = true;
 
-    _delay_ms(100); // debounce
+    // _delay_ms(100); // debounce
     if (waitForRelease) {
       while (digitalRead(pinButton) == buttonPressedValue) {
         // wait for release
@@ -310,8 +331,8 @@ void setup() {
   // from dreamster/dreamster-lib
   sonar[A].trigger_pin = 0;
   sonar[A].echo_pin = 1;
-  sonar[B].trigger_pin = 2;
-  sonar[B].echo_pin = 3;
+  // sonar[B].trigger_pin = 2;
+  // sonar[B].echo_pin = 3;
   // sonar[C].trigger_pin = 4;
   // sonar[C].echo_pin = 5;
 
@@ -371,6 +392,22 @@ void setup() {
   voices[0].waveform = PULSE;
   voices[1].waveform = PULSE;
   voices[2].waveform = PULSE;
+  
+  /* led cube config */
+  pinMode(COLUMN1_PIN, OUTPUT);
+  pinMode(COLUMN2_PIN, OUTPUT);
+  pinMode(COLUMN3_PIN, OUTPUT);
+  pinMode(COLUMN4_PIN, OUTPUT);
+  pinMode(COLUMN5_PIN, OUTPUT);
+  pinMode(COLUMN6_PIN, OUTPUT);
+  pinMode(COLUMN7_PIN, OUTPUT);
+  pinMode(COLUMN8_PIN, OUTPUT);
+  pinMode(COLUMN9_PIN, OUTPUT);
+  pinMode(ROW1_PIN, OUTPUT);
+  pinMode(ROW2_PIN, OUTPUT);
+  pinMode(ROW3_PIN, OUTPUT);
+  RowOff(1); RowOff(2); RowOff(3);
+  ColumnsOff();
 
   sei();
 }
@@ -385,8 +422,40 @@ void loop() {
     // play sound according to distance, focusing on a small octave range, 
     // but with a lot of precision, to emulate a true theremin
     for (int i = 0; i < NUM_SONARS; i++) {
+      RowOff(1); RowOff(2); RowOff(3);
+      ColumnsOff();
       voices[i].amp = 0;
       if (sonar[i].distance < MIN_DISTANCE || sonar[i].distance > MAX_DISTANCE) continue;
+      int mapped_distance = map(sonar[i].distance, MIN_DISTANCE, MAX_DISTANCE, 1, 27);
+      if (mapped_distance == 1) { RowOn(1); ColumnOn(1);}
+      if (mapped_distance == 2) { RowOn(1); ColumnOn(2);}
+      if (mapped_distance == 3) { RowOn(1); ColumnOn(3);}
+      if (mapped_distance == 4) { RowOn(1); ColumnOn(4);}
+      if (mapped_distance == 5) { RowOn(1); ColumnOn(5);}
+      if (mapped_distance == 6) { RowOn(1); ColumnOn(6);}
+      if (mapped_distance == 7) { RowOn(1); ColumnOn(7);}
+      if (mapped_distance == 8) { RowOn(1); ColumnOn(8);}
+      if (mapped_distance == 9) { RowOn(1); ColumnOn(9);}
+
+      if (mapped_distance == 10) {RowOn(2); ColumnOn(1);}
+      if (mapped_distance == 11) {RowOn(2); ColumnOn(2);}
+      if (mapped_distance == 12) {RowOn(2); ColumnOn(3);}
+      if (mapped_distance == 13) {RowOn(2); ColumnOn(4);}
+      if (mapped_distance == 14) {RowOn(2); ColumnOn(5);}
+      if (mapped_distance == 15) {RowOn(2); ColumnOn(6);}
+      if (mapped_distance == 16) {RowOn(2); ColumnOn(7);}
+      if (mapped_distance == 17) {RowOn(2); ColumnOn(8);}
+      if (mapped_distance == 18) {RowOn(2); ColumnOn(9);}
+
+      if (mapped_distance == 19) {RowOn(3); ColumnOn(1);}
+      if (mapped_distance == 20) {RowOn(3); ColumnOn(2);}
+      if (mapped_distance == 21) {RowOn(3); ColumnOn(3);}
+      if (mapped_distance == 22) {RowOn(3); ColumnOn(4);}
+      if (mapped_distance == 23) {RowOn(3); ColumnOn(5);}
+      if (mapped_distance == 24) {RowOn(3); ColumnOn(6);}
+      if (mapped_distance == 25) {RowOn(3); ColumnOn(7);}
+      if (mapped_distance == 26) {RowOn(3); ColumnOn(8);}
+      if (mapped_distance == 27) {RowOn(3); ColumnOn(9);}
       
       Voice* v = &voices[i];
 
@@ -412,6 +481,8 @@ void loop() {
     for (int i = 0; i < NUM_SONARS; i++) {
       // when outside the range, mute sound and proceed to next sonar
       if (sonar[i].distance < MIN_DISTANCE || sonar[i].distance > MAX_DISTANCE) {
+        RowOff(1); RowOff(2); RowOff(3);
+        ColumnsOff();
         voices[i].amp = 0;
         continue;
       }
@@ -442,17 +513,18 @@ void loop() {
         //  no restrictions
       }
       if (quantizedModeScale == C_PENTATONIC) {
+        RowOn(1); RowOn(2); RowOn(3);
         midiNote = map(sonar[i].distance, MIN_DISTANCE, MAX_DISTANCE, 9, 0);
-        if (midiNote == 0) midiNote = 57;
-        if (midiNote == 1) midiNote = 60;
-        if (midiNote == 2) midiNote = 62;
-        if (midiNote == 3) midiNote = 65;
-        if (midiNote == 4) midiNote = 67;
-        if (midiNote == 5) midiNote = 69;
-        if (midiNote == 6) midiNote = 72;
-        if (midiNote == 7) midiNote = 74;
-        if (midiNote == 8) midiNote = 77;
-        if (midiNote == 9) midiNote = 79;
+        if (midiNote == 0) {midiNote = 57; ColumnsOff();}
+        if (midiNote == 1) {midiNote = 60; ColumnsOff(); ColumnOn(1);}
+        if (midiNote == 2) {midiNote = 62; ColumnsOff(); ColumnOn(2);}
+        if (midiNote == 3) {midiNote = 65; ColumnsOff(); ColumnOn(3);}
+        if (midiNote == 4) {midiNote = 67; ColumnsOff(); ColumnOn(4);}
+        if (midiNote == 5) {midiNote = 69; ColumnsOff(); ColumnOn(5);}
+        if (midiNote == 6) {midiNote = 72; ColumnsOff(); ColumnOn(6);}
+        if (midiNote == 7) {midiNote = 74; ColumnsOff(); ColumnOn(7);}
+        if (midiNote == 8) {midiNote = 77; ColumnsOff(); ColumnOn(8);}
+        if (midiNote == 9) {midiNote = 79; ColumnsOff(); ColumnOn(9);}
       }
       if (quantizedModeScale == A_MAJOR) {
         const int index = map(sonar[i].distance, MIN_DISTANCE, MAX_DISTANCE, NUM_NOTES - 1, 0);
@@ -484,19 +556,27 @@ void loop() {
   
   if (isButtonPressed(PIN_BUTTON, LOW, true)) {
     serialDebug("new playing mode: ");
+    // if (playingMode == CONTINUOUS) {
+      // playingMode = QUANTIZED;
+      // quantizedModeScale = CHROMATIC;
+      // serialDebug("quantized - chromatic");
+    // } else if (playingMode == QUANTIZED && quantizedModeScale == CHROMATIC) {
+      // playingMode = QUANTIZED;
+      // quantizedModeScale = C_PENTATONIC;
+      // serialDebug("quantized - C pentatonic");
+    // } else if (playingMode == QUANTIZED && quantizedModeScale == C_PENTATONIC) {
+      // playingMode = QUANTIZED;
+      // quantizedModeScale = A_MAJOR;
+      // serialDebug("quantized - A major");
+    // } else if (playingMode == QUANTIZED && quantizedModeScale == A_MAJOR) {
+      // playingMode = CONTINUOUS;
+      // serialDebug("continuous");
+    // }
     if (playingMode == CONTINUOUS) {
-      playingMode = QUANTIZED;
-      quantizedModeScale = CHROMATIC;
-      serialDebug("quantized - chromatic");
-    } else if (playingMode == QUANTIZED && quantizedModeScale == CHROMATIC) {
       playingMode = QUANTIZED;
       quantizedModeScale = C_PENTATONIC;
       serialDebug("quantized - C pentatonic");
     } else if (playingMode == QUANTIZED && quantizedModeScale == C_PENTATONIC) {
-      playingMode = QUANTIZED;
-      quantizedModeScale = A_MAJOR;
-      serialDebug("quantized - A major");
-    } else if (playingMode == QUANTIZED && quantizedModeScale == A_MAJOR) {
       playingMode = CONTINUOUS;
       serialDebug("continuous");
     }
@@ -508,4 +588,45 @@ void loop() {
   if (!debugMode) {
     _delay_us(1);
   }
+  
+  // cubeled debug, from cdrfiuba/pcbdesarrollo
+  /*if (nextBigTick) {
+      nextBigTick = false;
+      cubeled_state++;
+      if (cubeled_state == 1) {         ColumnOn(1); 
+                                        RowOff(2); RowOff(3); RowOn(1);
+      } else if (cubeled_state == 2) {  ColumnOff(1); ColumnOn(2);
+      } else if (cubeled_state == 3) {  ColumnOff(2); ColumnOn(3);
+      } else if (cubeled_state == 4) {  ColumnOff(3); ColumnOn(6);
+      } else if (cubeled_state == 5) {  ColumnOff(6); ColumnOn(5);
+      } else if (cubeled_state == 6) {  ColumnOff(5); ColumnOn(4);
+      } else if (cubeled_state == 7) {  ColumnOff(4); ColumnOn(7);
+      } else if (cubeled_state == 8) {  ColumnOff(7); ColumnOn(8);
+      } else if (cubeled_state == 9) {  ColumnOff(8); ColumnOn(9);
+      } else if (cubeled_state == 10) { RowOff(1); RowOn(2);
+      } else if (cubeled_state == 11) { ColumnOff(9); ColumnOn(8);
+      } else if (cubeled_state == 12) { ColumnOff(8); ColumnOn(7);
+      } else if (cubeled_state == 13) { ColumnOff(7); ColumnOn(4);
+      } else if (cubeled_state == 14) { ColumnOff(4); ColumnOn(5);
+      } else if (cubeled_state == 15) { ColumnOff(5); ColumnOn(6);
+      } else if (cubeled_state == 16) { ColumnOff(6); ColumnOn(3);
+      } else if (cubeled_state == 17) { ColumnOff(3); ColumnOn(2);
+      } else if (cubeled_state == 18) { ColumnOff(2); ColumnOn(1);
+      } else if (cubeled_state == 19) { RowOff(2); RowOn(3);
+      } else if (cubeled_state == 20) { ColumnOff(1); ColumnOn(2);
+      } else if (cubeled_state == 21) { ColumnOff(2); ColumnOn(3);
+      } else if (cubeled_state == 22) { ColumnOff(3); ColumnOn(6);
+      } else if (cubeled_state == 23) { ColumnOff(6); ColumnOn(5);
+      } else if (cubeled_state == 24) { ColumnOff(5); ColumnOn(4);
+      } else if (cubeled_state == 25) { ColumnOff(4); ColumnOn(7);
+      } else if (cubeled_state == 26) { ColumnOff(7); ColumnOn(8);
+      } else if (cubeled_state == 27) { ColumnOff(8); ColumnOn(9);
+      } else if (cubeled_state == 28) { RowOff(3); ColumnOff(9);
+                                        RowOn(2);  ColumnOn(5);
+      } else if (cubeled_state == 29) { ColumnOff(5);
+      } else if (cubeled_state == 30) {
+        cubeled_state = 0;
+      }
+  }*/
+  
 }

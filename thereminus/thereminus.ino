@@ -17,7 +17,7 @@ const byte CONTINUOUS_MODE_VOLUME = 8; // from 0 to 15
 const byte QUANTIZED_MODE_VELOCITY = 64; // from 0 to 127
 const int CONTINUOUS_MODE_MAX_FREQ = 2400;
 const int HYSTERESIS_IN_CM = 3;
-const int NOTE_DIVISIONS = HYSTERESIS_IN_CM + 1;
+const int NOTE_DIVISIONS = 10;
 const int NUM_NOTES = ceil((MAX_DISTANCE - MIN_DISTANCE) / NOTE_DIVISIONS);
 const int MIDI_BASE_NOTE = 57;
 
@@ -497,10 +497,10 @@ void loop() {
       
       // set range that skips the hysteresis to allow for faster response times
       if (quantizedModeScale == CHROMATIC) noteJumpDistance = 2;
-      
+
       rangeUp = ceil(sonar[i].distance / NOTE_DIVISIONS);
       rangeDown = ceil((sonar[i].distance + HYSTERESIS_IN_CM) / NOTE_DIVISIONS);
-      
+      /*
       if (rangeUp == rangeDown) {
         midiNote = MIDI_BASE_NOTE + rangeUp;
       }
@@ -508,13 +508,18 @@ void loop() {
         midiNote = MIDI_BASE_NOTE + rangeUp;
       }
       previousMidiNote = MIDI_BASE_NOTE + rangeUp;
-
+      */
       if (quantizedModeScale == CHROMATIC) {
         //  no restrictions
       }
       if (quantizedModeScale == C_PENTATONIC) {
+        /*
         RowOn(1); RowOn(2); RowOn(3);
         midiNote = map(sonar[i].distance, MIN_DISTANCE, MAX_DISTANCE, 9, 0);
+        */
+        if (rangeUp == rangeDown) {
+          midiNote = rangeUp;
+        }
         if (midiNote == 0) {midiNote = 57; ColumnsOff();}
         if (midiNote == 1) {midiNote = 60; ColumnsOff(); ColumnOn(1);}
         if (midiNote == 2) {midiNote = 62; ColumnsOff(); ColumnOn(2);}
@@ -525,16 +530,17 @@ void loop() {
         if (midiNote == 7) {midiNote = 74; ColumnsOff(); ColumnOn(7);}
         if (midiNote == 8) {midiNote = 77; ColumnsOff(); ColumnOn(8);}
         if (midiNote == 9) {midiNote = 79; ColumnsOff(); ColumnOn(9);}
+        
       }
       if (quantizedModeScale == A_MAJOR) {
         const int index = map(sonar[i].distance, MIN_DISTANCE, MAX_DISTANCE, NUM_NOTES - 1, 0);
-        const int NOTES[NUM_NOTES] = {
+        /*const int NOTES[NUM_NOTES] = {
           42, 44, 45, 47, 49, 50, 52, 
           54, 56, 57, 59, 61, 62, 64, 
           66, 68, 69, 71, 73, 74, 76,
           78, 80, 81
         };
-        midiNote = NOTES[index];
+        midiNote = NOTES[index];*/
       }
       serialDebug("%.2d %.2d %.2d %.2d\n", rangeUp, rangeDown, midiNote, sonar[i].distance);
       

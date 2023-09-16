@@ -17,14 +17,14 @@ const byte CONTINUOUS_MODE_VOLUME = 8; // from 0 to 15
 const byte QUANTIZED_MODE_VELOCITY = 64; // from 0 to 127
 const int CONTINUOUS_MODE_MAX_FREQ = 2400;
 const int HYSTERESIS_IN_CM = 3;
-const int NOTE_DIVISIONS = 10;
-const int NUM_NOTES = ceil((MAX_DISTANCE - MIN_DISTANCE) / NOTE_DIVISIONS);
 const int MIDI_BASE_NOTE = 57;
 
 byte rangeUp;
 byte rangeDown;
+byte segment = 0;
+byte previousSegment = 0;
 byte midiNote = 0;
-byte previousMidiNote = 0;
+int num_notes = 0;
 
 char debugStringBuffer[60];
 bool debugMode = true;
@@ -486,7 +486,6 @@ void loop() {
         voices[i].amp = 0;
         continue;
       }
-      
 
       // set hysteresis as a range going from bottom to top or from top to bottom.
       // each zone determines the current note, which can only be changed
@@ -495,52 +494,84 @@ void loop() {
       //    --1-- ?? --2-- ?? --3-- ?? --4-- ??
       // << 11111 22222222 33333333 44444444 55 <<
       
-      // set range that skips the hysteresis to allow for faster response times
-      if (quantizedModeScale == CHROMATIC) noteJumpDistance = 2;
-
-      rangeUp = ceil(sonar[i].distance / NOTE_DIVISIONS);
-      rangeDown = ceil((sonar[i].distance + HYSTERESIS_IN_CM) / NOTE_DIVISIONS);
-      /*
-      if (rangeUp == rangeDown) {
-        midiNote = MIDI_BASE_NOTE + rangeUp;
-      }
-      if (abs(midiNote - previousMidiNote) >= noteJumpDistance) {
-        midiNote = MIDI_BASE_NOTE + rangeUp;
-      }
-      previousMidiNote = MIDI_BASE_NOTE + rangeUp;
-      */
       if (quantizedModeScale == CHROMATIC) {
-        //  no restrictions
+        num_notes = 24;
+        rangeUp = ceil(sonar[i].distance * num_notes / MAX_DISTANCE);
+        rangeDown = ceil((sonar[i].distance + HYSTERESIS_IN_CM) * num_notes / MAX_DISTANCE);
+        if (rangeUp == rangeDown || abs(segment - previousSegment) >= noteJumpDistance) {
+          segment = rangeUp;
+        }
+        previousSegment = rangeUp;
+        midiNote = segment + MIDI_BASE_NOTE;
+
+        // leds
+        RowOn(1); RowOn(2); RowOn(3);
+        ColumnsOff();
+        if (segment == 8)  ColumnOn(1);
+        if (segment == 9)  ColumnOn(2);
+        if (segment == 10) ColumnOn(3);
+        if (segment == 11) ColumnOn(4);
+        if (segment == 12) ColumnOn(5);
+        if (segment == 13) ColumnOn(6);
+        if (segment == 14) ColumnOn(7);
+        if (segment == 15) ColumnOn(8);
+        if (segment == 16) ColumnOn(9);
       }
       if (quantizedModeScale == C_PENTATONIC) {
-        /*
-        RowOn(1); RowOn(2); RowOn(3);
-        midiNote = map(sonar[i].distance, MIN_DISTANCE, MAX_DISTANCE, 9, 0);
-        */
-        if (rangeUp == rangeDown) {
-          midiNote = rangeUp;
+        num_notes = 10;
+        rangeUp = ceil(sonar[i].distance * num_notes / MAX_DISTANCE);
+        rangeDown = ceil((sonar[i].distance + HYSTERESIS_IN_CM) * num_notes / MAX_DISTANCE);
+
+        if (rangeUp == rangeDown || abs(segment - previousSegment) >= noteJumpDistance) {
+          segment = rangeUp;
         }
-        if (midiNote == 0) {midiNote = 57; ColumnsOff();}
-        if (midiNote == 1) {midiNote = 60; ColumnsOff(); ColumnOn(1);}
-        if (midiNote == 2) {midiNote = 62; ColumnsOff(); ColumnOn(2);}
-        if (midiNote == 3) {midiNote = 65; ColumnsOff(); ColumnOn(3);}
-        if (midiNote == 4) {midiNote = 67; ColumnsOff(); ColumnOn(4);}
-        if (midiNote == 5) {midiNote = 69; ColumnsOff(); ColumnOn(5);}
-        if (midiNote == 6) {midiNote = 72; ColumnsOff(); ColumnOn(6);}
-        if (midiNote == 7) {midiNote = 74; ColumnsOff(); ColumnOn(7);}
-        if (midiNote == 8) {midiNote = 77; ColumnsOff(); ColumnOn(8);}
-        if (midiNote == 9) {midiNote = 79; ColumnsOff(); ColumnOn(9);}
-        
+        previousSegment = rangeUp;
+        const int NOTES[num_notes + 1] = {
+          57, 60, 62, 65, 67, 69, 72, 74, 77, 79, 81
+        };
+        midiNote = NOTES[segment];
+
+        // leds
+        RowOn(1); RowOn(2); RowOn(3);
+        ColumnsOff();
+        if (segment == 1) ColumnOn(1);
+        if (segment == 2) ColumnOn(2);
+        if (segment == 3) ColumnOn(3);
+        if (segment == 4) ColumnOn(4);
+        if (segment == 5) ColumnOn(5);
+        if (segment == 6) ColumnOn(6);
+        if (segment == 7) ColumnOn(7);
+        if (segment == 8) ColumnOn(8);
+        if (segment == 9) ColumnOn(9);
       }
       if (quantizedModeScale == A_MAJOR) {
-        const int index = map(sonar[i].distance, MIN_DISTANCE, MAX_DISTANCE, NUM_NOTES - 1, 0);
-        /*const int NOTES[NUM_NOTES] = {
+        int a_major_notes = 24;
+        rangeUp = ceil(sonar[i].distance * a_major_notes / MAX_DISTANCE);
+        rangeDown = ceil((sonar[i].distance + HYSTERESIS_IN_CM) * a_major_notes / MAX_DISTANCE);
+        if (rangeUp == rangeDown || abs(segment - previousSegment) >= noteJumpDistance) {
+          segment = rangeUp;
+        }
+        previousSegment = rangeUp;
+        const int NOTES[a_major_notes + 1] = {
           42, 44, 45, 47, 49, 50, 52, 
           54, 56, 57, 59, 61, 62, 64, 
           66, 68, 69, 71, 73, 74, 76,
-          78, 80, 81
+          78, 80, 81, 83
         };
-        midiNote = NOTES[index];*/
+        midiNote = NOTES[segment];
+
+        // leds
+        RowOn(1); RowOn(2); RowOn(3);
+        ColumnsOff();
+        if (segment == 8)  ColumnOn(1);
+        if (segment == 9)  ColumnOn(2);
+        if (segment == 10) ColumnOn(3);
+        if (segment == 11) ColumnOn(4);
+        if (segment == 12) ColumnOn(5);
+        if (segment == 13) ColumnOn(6);
+        if (segment == 14) ColumnOn(7);
+        if (segment == 15) ColumnOn(8);
+        if (segment == 16) ColumnOn(9);
       }
       serialDebug("%.2d %.2d %.2d %.2d\n", rangeUp, rangeDown, midiNote, sonar[i].distance);
       
@@ -555,37 +586,32 @@ void loop() {
     }
   }
 
-  // for (int i = 0; i < NUM_SONARS; i++) {
-    // serialDebug("%.2d %.4d ", i, sonar[i].distance);
-  // }
-  // serialDebug("\n");
-  
   if (isButtonPressed(PIN_BUTTON, LOW, true)) {
     serialDebug("new playing mode: ");
-    // if (playingMode == CONTINUOUS) {
-      // playingMode = QUANTIZED;
-      // quantizedModeScale = CHROMATIC;
-      // serialDebug("quantized - chromatic");
-    // } else if (playingMode == QUANTIZED && quantizedModeScale == CHROMATIC) {
-      // playingMode = QUANTIZED;
-      // quantizedModeScale = C_PENTATONIC;
-      // serialDebug("quantized - C pentatonic");
-    // } else if (playingMode == QUANTIZED && quantizedModeScale == C_PENTATONIC) {
-      // playingMode = QUANTIZED;
-      // quantizedModeScale = A_MAJOR;
-      // serialDebug("quantized - A major");
-    // } else if (playingMode == QUANTIZED && quantizedModeScale == A_MAJOR) {
-      // playingMode = CONTINUOUS;
-      // serialDebug("continuous");
-    // }
     if (playingMode == CONTINUOUS) {
+      playingMode = QUANTIZED;
+      quantizedModeScale = CHROMATIC;
+      serialDebug("quantized - chromatic");
+    } else if (playingMode == QUANTIZED && quantizedModeScale == CHROMATIC) {
       playingMode = QUANTIZED;
       quantizedModeScale = C_PENTATONIC;
       serialDebug("quantized - C pentatonic");
     } else if (playingMode == QUANTIZED && quantizedModeScale == C_PENTATONIC) {
+      playingMode = QUANTIZED;
+      quantizedModeScale = A_MAJOR;
+      serialDebug("quantized - A major");
+    } else if (playingMode == QUANTIZED && quantizedModeScale == A_MAJOR) {
       playingMode = CONTINUOUS;
       serialDebug("continuous");
     }
+//    if (playingMode == CONTINUOUS) {
+//      playingMode = QUANTIZED;
+//      quantizedModeScale = C_PENTATONIC;
+//      serialDebug("quantized - C pentatonic");
+//    } else if (playingMode == QUANTIZED && quantizedModeScale == C_PENTATONIC) {
+//      playingMode = CONTINUOUS;
+//      serialDebug("continuous");
+//    }
     serialDebug("\n");
   }
   

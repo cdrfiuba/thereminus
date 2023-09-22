@@ -1,12 +1,13 @@
-enum playingModes {CONTINUOUS, QUANTIZED};
-const byte INITIAL_PLAYING_MODE = CONTINUOUS;
-byte playingMode = INITIAL_PLAYING_MODE;
+#include <avr/pgmspace.h>
+#include "samples.h"
+
+enum playingModes {CONTINUOUS, QUANTIZED, SAMPLES};
+playingModes playingMode = CONTINUOUS;
 
 enum scales {CHROMATIC, C_PENTATONIC, A_MAJOR};
-const byte INITIAL_QUANTIZED_MODE_SCALE = CHROMATIC;
-byte quantizedModeScale = INITIAL_QUANTIZED_MODE_SCALE;
+scales quantizedModeScale = CHROMATIC;
 
-const byte INITIAL_NOTE_JUMP_DISTANCE = 2;
+const byte INITIAL_NOTE_JUMP_DISTANCE = 3;
 byte noteJumpDistance = INITIAL_NOTE_JUMP_DISTANCE;
 
 const int PIN_BUTTON = 9;
@@ -56,7 +57,7 @@ const int ROW3_PIN = 7;
 #define RowOn(N) digitalWrite(ROW ## N ## _PIN, LOW);
 #define RowOff(N) digitalWrite(ROW ## N ## _PIN, HIGH);
 #define ColumnsOff() ColumnOff(1);ColumnOff(2);ColumnOff(3);ColumnOff(4);ColumnOff(5);ColumnOff(6);ColumnOff(7);ColumnOff(8);ColumnOff(9);
-int cubeled_state = 0;
+#define LEN(a) (uint16_t)(sizeof a / sizeof *a)
 
 /**
  * from cdrfiuba/picopico
@@ -81,20 +82,26 @@ const uint8_t amp[] = {0, 16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 
 // Noise period counter (12 entries)
 const uint16_t noisePeriods[] = {1200, 1760, 2360, 2960, 3760, 4720, 7080, 9440, 14160, 18880, 37800, 65535};
 
-enum Waveform { PULSE, SAW, TRI, NOISE };
+enum Waveform { PULSE, SAW, TRI, NOISE, SAMPLE };
 
 struct Voice {
-    // Player-related registers
-    uint8_t   note;                   // Note (0-11)
-    uint8_t   octave;                 // Octave (0-7)
-    uint8_t   volume;                 // Volume (0-15)
+  // Player-related registers
+  uint8_t   note;                   // Note (0-11)
+  uint8_t   octave;                 // Octave (0-7)
+  uint8_t   volume;                 // Volume (0-15)
 
-    // Internal registers for sound generation
-    volatile Waveform waveform;
-    volatile int16_t  acc;            // Phase accumulator
-    volatile uint16_t freq;           // Frequency delta
-    volatile uint8_t  amp;            // Amplitude
-    volatile int8_t   pw;             // Pulse width
+  // Internal registers for sound generation
+  volatile Waveform waveform;
+  volatile int16_t  acc;            // Phase accumulator
+  volatile uint16_t freq;           // Frequency delta
+  volatile uint8_t  amp;            // Amplitude
+  volatile int8_t   pw;             // Pulse width
+  volatile const void* sample;      // pointer to sample
+  volatile uint16_t sample_size;    // size of the sample array
+  volatile uint16_t sample_counter; // counter for the current index of the sample
+  volatile uint16_t sample_tick;    // counter for correcting the sample rate
+  volatile bool sample_must_play;   // flag for starting the playback of a sample
+  volatile bool sample_is_playing;  // flag for playing back each byte of the sample
 };
 
 // Note buffer
@@ -114,81 +121,98 @@ ISR(TIMER0_COMPA_vect) {
   sound_generation();
 }
 void sound_generation() {
-    // tick counter for time keeping
-    timer0_tick++;
-    if (timer0_tick > 111) { // 333 = 16.65ms, 111 = 5.55ms
-        timer0_tick = 0;
-        // if the tick counter fires before the last tick was completed,
-        // while still playing, toggle the led
-        //if (nextTick && playing) {
-        //    digitalWrite(PIN_LED, abs(digitalRead(PIN_LED) - 1));
-        //}
-        // ticks and big ticks (every 1 second)
-        nextTick = true;
-        ticks++;
-        if (ticks > 27) { // 5.55ms * 27 = 149.85ms
-            ticks = 0;
-            nextBigTick = true;
-            digitalWrite(PIN_LED, abs(digitalRead(PIN_LED) - 1));
-        }
+  // tick counter for time keeping
+  timer0_tick++;
+  if (timer0_tick > 111) { // 333 = 16.66ms, 111 = 5.55ms
+    timer0_tick = 0;
+    // if the tick counter fires before the last tick was completed,
+    // while still playing, toggle the led
+    //if (nextTick && playing) {
+    //    digitalWrite(PIN_LED, abs(digitalRead(PIN_LED) - 1));
+    //}
+    // ticks and big ticks (every 1 second)
+    nextTick = true;
+    ticks++;
+    if (ticks > 90) { // 5.55ms * 180 = 1000ms
+      ticks = 0;
+      nextBigTick = true;
+      digitalWrite(PIN_LED, abs(digitalRead(PIN_LED) - 1));
     }
+  }
 
-    unsigned char temp;
-    signed char stemp, mask, out = 0;
-    Voice* v;
-
-    for (int i = 0; i < NUM_VOICES; i++) {
-        v = &voices[i];
-        switch (v->waveform) {
-            case PULSE:
-                v->acc += v->freq;
-                temp = (v->acc >> 8) & v->pw;
-                out += (temp ? v->amp : 0) >> 2;
-                break;
-            case TRI:
-                v->acc += v->freq / 2;
-                stemp = v->acc >> 8;
-                mask = stemp >> 7;
-                if (v->amp != 0) {
-                    if (v->volume > 12) { // 13 14 15
-                        out += (stemp ^ mask) >> 1;
-                    } else if (v->volume > 8) { // 9 10 11 12
-                        out += (stemp ^ mask) >> 2;
-                    } else if (v->volume > 4) { // 5 6 7 8
-                        out += (stemp ^ mask) >> 3;
-                    } else if (v->volume > 0) { // 1 2 3 4
-                        out += (stemp ^ mask) >> 4;
-                    }
-                }
-                break;
-            case SAW:
-                v->acc += v->freq;
-                temp = v->acc >> 8;
-                out += (temp ? v->amp : 0) >> 2;
-                break;
-            case NOISE:
-                v->acc += v->freq * 8;
-                stemp = (v->acc >> 8) & 0x80;
-                // if temp != oldTemp, trigger the LFSR to generate a new pseudorandom value
-                if (stemp != oldTemp) {
-                    lfsrOut = (lfsr & 1) ^ ((lfsr & 2) >> 1);  // output is bit 0 XOR bit 1
-                    lfsr = (lfsr >> 1) | (lfsrOut << 14);      // shift and include output on bit 15
-                    oldTemp = stemp;
-                }
-                out += (lfsrOut ? v->amp : 0) >> 2;
-                break;
+  // inspired by http://www.technoblogy.com/show?2E6L
+  unsigned char temp;
+  signed char stemp, mask, out = 0;
+  Voice* v;
+  for (int i = 0; i < NUM_VOICES; i++) {
+    v = &voices[i];
+    switch (v->waveform) {
+      case PULSE:
+        v->acc += v->freq;
+        temp = (v->acc >> 8) & v->pw;
+        out += (temp ? v->amp : 0) >> 2;
+        break;
+      case TRI:
+        v->acc += v->freq / 2;
+        stemp = v->acc >> 8;
+        mask = stemp >> 7;
+        if (v->amp != 0) {
+          if (v->volume > 12) {  // 13 14 15
+            out += (stemp ^ mask) >> 1;
+          } else if (v->volume > 8) {  // 9 10 11 12
+            out += (stemp ^ mask) >> 2;
+          } else if (v->volume > 4) {  // 5 6 7 8
+            out += (stemp ^ mask) >> 3;
+          } else if (v->volume > 0) {  // 1 2 3 4
+            out += (stemp ^ mask) >> 4;
+          }
         }
-    }
+        break;
+      case SAW:
+        v->acc += v->freq;
+        temp = v->acc >> 8;
+        out += (temp ? v->amp : 0) >> 2;
+        break;
+      case NOISE:
+        v->acc += v->freq * 8;
+        stemp = (v->acc >> 8) & 0x80;
+        // if temp != oldTemp, trigger the LFSR to generate a new pseudorandom value
+        if (stemp != oldTemp) {
+          lfsrOut = (lfsr & 1) ^ ((lfsr & 2) >> 1);  // output is bit 0 XOR bit 1
+          lfsr = (lfsr >> 1) | (lfsrOut << 14);      // shift and include output on bit 15
+          oldTemp = stemp;
+        }
+        out += (lfsrOut ? v->amp : 0) >> 2;
+        break;
+      case SAMPLE:
+        if (v->sample_must_play == true) {
+          v->sample_must_play = false;
+          v->sample_counter = 0;
+          v->sample_is_playing = true;
+        }
+        if (v->sample_is_playing) {
+          v->sample_counter++;
+          out += pgm_read_byte_near((char*)v->sample + v->sample_counter - 1);
+          if (v->sample_counter >= v->sample_size - 1) {
+            v->sample_is_playing = false;
+            v->sample_counter = 0;
+          }
+        } else {
+          out += 128;
+        }
+        break;
+      }
+  }
 
-    // notes on the noise channels:
-    // This noise generator is somewhat based on the mechanism found in the NES APU.
-    // The NES has a linear-feedback shift register for generating pseudorandom numbers.
-    // It starts with a register set to 1, and when the period counter reaches 0, it
-    // clocks the shift register.
-    // The LFSR performs an Exclusive OR between bit 0 and bit 1, then shifts to the
-    // right, and sets/resets bit 15 based on the exclusive OR result.
+  // notes on the noise channels:
+  // This noise generator is somewhat based on the mechanism found in the NES APU.
+  // The NES has a linear-feedback shift register for generating pseudorandom numbers.
+  // It starts with a register set to 1, and when the period counter reaches 0, it
+  // clocks the shift register.
+  // The LFSR performs an Exclusive OR between bit 0 and bit 1, then shifts to the
+  // right, and sets/resets bit 15 based on the exclusive OR result.
 
-    OCR1B = out;
+  OCR1B = out;
 }
 
 /**
@@ -321,6 +345,56 @@ bool isButtonPressed (int pinButton, int buttonPressedValue = LOW, bool waitForR
   buttonPressed = false;
   return false;
 }
+void ledsBy10Segments(int segment) {
+  RowOn(1); RowOn(2); RowOn(3);
+  ColumnsOff();
+  switch (segment) {
+    case 1: ColumnOn(1) break;
+    case 2: ColumnOn(2) break;
+    case 3: ColumnOn(3) break;
+    case 4: ColumnOn(4) break;
+    case 5: ColumnOn(5) break;
+    case 6: ColumnOn(6) break;
+    case 7: ColumnOn(7) break;
+    case 8: ColumnOn(8) break;
+    case 9: ColumnOn(9) break;
+  }
+}
+void ledsBy27Segments(int segment) {
+  RowOff(1); RowOff(2); RowOff(3);
+  ColumnsOff();
+  switch (segment) {
+    case 1: RowOn(1); ColumnOn(1); break;
+    case 2: RowOn(1); ColumnOn(2); break;
+    case 3: RowOn(1); ColumnOn(3); break;
+    case 4: RowOn(1); ColumnOn(4); break;
+    case 5: RowOn(1); ColumnOn(5); break;
+    case 6: RowOn(1); ColumnOn(6); break;
+    case 7: RowOn(1); ColumnOn(7); break;
+    case 8: RowOn(1); ColumnOn(8); break;
+    case 9: RowOn(1); ColumnOn(9); break;
+
+    case 10: RowOn(2); ColumnOn(1); break;
+    case 11: RowOn(2); ColumnOn(2); break;
+    case 12: RowOn(2); ColumnOn(3); break;
+    case 13: RowOn(2); ColumnOn(4); break;
+    case 14: RowOn(2); ColumnOn(5); break;
+    case 15: RowOn(2); ColumnOn(6); break;
+    case 16: RowOn(2); ColumnOn(7); break;
+    case 17: RowOn(2); ColumnOn(8); break;
+    case 18: RowOn(2); ColumnOn(9); break;
+
+    case 19: RowOn(3); ColumnOn(1); break;
+    case 20: RowOn(3); ColumnOn(2); break;
+    case 21: RowOn(3); ColumnOn(3); break;
+    case 22: RowOn(3); ColumnOn(4); break;
+    case 23: RowOn(3); ColumnOn(5); break;
+    case 24: RowOn(3); ColumnOn(6); break;
+    case 25: RowOn(3); ColumnOn(7); break;
+    case 26: RowOn(3); ColumnOn(8); break;
+    case 27: RowOn(3); ColumnOn(9); break;
+  }
+}
 void setup() {
   Serial.begin(115200);
 
@@ -383,16 +457,15 @@ void setup() {
 
   // voice initialization
   for (int i = 0; i < NUM_VOICES; i++) {
-    Voice* v = &voices[i];
-    v->octave = DEFAULT_OCTAVE;
-    v->volume = DEFAULT_VOL;
-    v->pw = DEFAULT_PW;
+    voices[i].octave = DEFAULT_OCTAVE;
+    voices[i].volume = DEFAULT_VOL;
+    voices[i].pw = DEFAULT_PW;
   }
   // voices
   voices[0].waveform = PULSE;
   voices[1].waveform = PULSE;
   voices[2].waveform = PULSE;
-  
+
   /* led cube config */
   pinMode(COLUMN1_PIN, OUTPUT);
   pinMode(COLUMN2_PIN, OUTPUT);
@@ -422,63 +495,35 @@ void loop() {
     // play sound according to distance, focusing on a small octave range, 
     // but with a lot of precision, to emulate a true theremin
     for (int i = 0; i < NUM_SONARS; i++) {
+      voices[i].waveform = PULSE;
+      voices[i].amp = 0;
       RowOff(1); RowOff(2); RowOff(3);
       ColumnsOff();
-      voices[i].amp = 0;
       if (sonar[i].distance < MIN_DISTANCE || sonar[i].distance > MAX_DISTANCE) continue;
       int mapped_distance = map(sonar[i].distance, MIN_DISTANCE, MAX_DISTANCE, 1, 27);
-      if (mapped_distance == 1) { RowOn(1); ColumnOn(1);}
-      if (mapped_distance == 2) { RowOn(1); ColumnOn(2);}
-      if (mapped_distance == 3) { RowOn(1); ColumnOn(3);}
-      if (mapped_distance == 4) { RowOn(1); ColumnOn(4);}
-      if (mapped_distance == 5) { RowOn(1); ColumnOn(5);}
-      if (mapped_distance == 6) { RowOn(1); ColumnOn(6);}
-      if (mapped_distance == 7) { RowOn(1); ColumnOn(7);}
-      if (mapped_distance == 8) { RowOn(1); ColumnOn(8);}
-      if (mapped_distance == 9) { RowOn(1); ColumnOn(9);}
-
-      if (mapped_distance == 10) {RowOn(2); ColumnOn(1);}
-      if (mapped_distance == 11) {RowOn(2); ColumnOn(2);}
-      if (mapped_distance == 12) {RowOn(2); ColumnOn(3);}
-      if (mapped_distance == 13) {RowOn(2); ColumnOn(4);}
-      if (mapped_distance == 14) {RowOn(2); ColumnOn(5);}
-      if (mapped_distance == 15) {RowOn(2); ColumnOn(6);}
-      if (mapped_distance == 16) {RowOn(2); ColumnOn(7);}
-      if (mapped_distance == 17) {RowOn(2); ColumnOn(8);}
-      if (mapped_distance == 18) {RowOn(2); ColumnOn(9);}
-
-      if (mapped_distance == 19) {RowOn(3); ColumnOn(1);}
-      if (mapped_distance == 20) {RowOn(3); ColumnOn(2);}
-      if (mapped_distance == 21) {RowOn(3); ColumnOn(3);}
-      if (mapped_distance == 22) {RowOn(3); ColumnOn(4);}
-      if (mapped_distance == 23) {RowOn(3); ColumnOn(5);}
-      if (mapped_distance == 24) {RowOn(3); ColumnOn(6);}
-      if (mapped_distance == 25) {RowOn(3); ColumnOn(7);}
-      if (mapped_distance == 26) {RowOn(3); ColumnOn(8);}
-      if (mapped_distance == 27) {RowOn(3); ColumnOn(9);}
+      ledsBy27Segments(mapped_distance);
       
-      Voice* v = &voices[i];
-
-      v->amp = amp[CONTINUOUS_MODE_VOLUME];
+      voices[i].amp = amp[CONTINUOUS_MODE_VOLUME];
       // multiplying the usable range (from 0 to 60, or from 0 to 100) by 16 
       // provides approximately one octave of continuous sound, going from 
       // around 250Hz to 500Hz when setting the base freq to 800
       int32_t freq = CONTINUOUS_MODE_MAX_FREQ - (sonar[i].distance) * 16;
       if (freq < 0) freq = 0;
-      v->freq = (uint16_t)freq;
+      voices[i].freq = (uint16_t)freq;
       
       // reduce volume if far
       int distanceFromMax = MAX_DISTANCE - sonar[i].distance;
       if (distanceFromMax < CONTINUOUS_MODE_VOLUME) {
-        v->amp = amp[distanceFromMax];
+        voices[i].amp = amp[distanceFromMax];
       }
-      serialDebug("%.4d %.2d\n", v->freq, sonar[i].distance);
+      serialDebug("%.4d %.3d\n",voices[i].freq, sonar[i].distance);
     }
   }
 
   if (playingMode == QUANTIZED) {
     // play sound according to distance
     for (int i = 0; i < NUM_SONARS; i++) {
+      voices[i].waveform = PULSE;
       // when outside the range, mute sound and proceed to next sonar
       if (sonar[i].distance < MIN_DISTANCE || sonar[i].distance > MAX_DISTANCE) {
         RowOff(1); RowOff(2); RowOff(3);
@@ -505,17 +550,7 @@ void loop() {
         midiNote = segment + MIDI_BASE_NOTE;
 
         // leds
-        RowOn(1); RowOn(2); RowOn(3);
-        ColumnsOff();
-        if (segment == 8)  ColumnOn(1);
-        if (segment == 9)  ColumnOn(2);
-        if (segment == 10) ColumnOn(3);
-        if (segment == 11) ColumnOn(4);
-        if (segment == 12) ColumnOn(5);
-        if (segment == 13) ColumnOn(6);
-        if (segment == 14) ColumnOn(7);
-        if (segment == 15) ColumnOn(8);
-        if (segment == 16) ColumnOn(9);
+        ledsBy10Segments(segment - 7);
       }
       if (quantizedModeScale == C_PENTATONIC) {
         num_notes = 10;
@@ -525,34 +560,23 @@ void loop() {
         if (rangeUp == rangeDown || abs(segment - previousSegment) >= noteJumpDistance) {
           segment = rangeUp;
         }
-        previousSegment = rangeUp;
+        previousSegment = segment;
         const int NOTES[num_notes + 1] = {
           57, 60, 62, 65, 67, 69, 72, 74, 77, 79, 81
         };
         midiNote = NOTES[segment];
 
-        // leds
-        RowOn(1); RowOn(2); RowOn(3);
-        ColumnsOff();
-        if (segment == 1) ColumnOn(1);
-        if (segment == 2) ColumnOn(2);
-        if (segment == 3) ColumnOn(3);
-        if (segment == 4) ColumnOn(4);
-        if (segment == 5) ColumnOn(5);
-        if (segment == 6) ColumnOn(6);
-        if (segment == 7) ColumnOn(7);
-        if (segment == 8) ColumnOn(8);
-        if (segment == 9) ColumnOn(9);
+        ledsBy10Segments(segment);
       }
       if (quantizedModeScale == A_MAJOR) {
-        int a_major_notes = 24;
-        rangeUp = ceil(sonar[i].distance * a_major_notes / MAX_DISTANCE);
-        rangeDown = ceil((sonar[i].distance + HYSTERESIS_IN_CM) * a_major_notes / MAX_DISTANCE);
+        num_notes = 24;
+        rangeUp = ceil(sonar[i].distance * num_notes / MAX_DISTANCE);
+        rangeDown = ceil((sonar[i].distance + HYSTERESIS_IN_CM) * num_notes / MAX_DISTANCE);
         if (rangeUp == rangeDown || abs(segment - previousSegment) >= noteJumpDistance) {
           segment = rangeUp;
         }
-        previousSegment = rangeUp;
-        const int NOTES[a_major_notes + 1] = {
+        previousSegment = segment;
+        const int NOTES[num_notes + 1] = {
           42, 44, 45, 47, 49, 50, 52, 
           54, 56, 57, 59, 61, 62, 64, 
           66, 68, 69, 71, 73, 74, 76,
@@ -561,28 +585,64 @@ void loop() {
         midiNote = NOTES[segment];
 
         // leds
-        RowOn(1); RowOn(2); RowOn(3);
-        ColumnsOff();
-        if (segment == 8)  ColumnOn(1);
-        if (segment == 9)  ColumnOn(2);
-        if (segment == 10) ColumnOn(3);
-        if (segment == 11) ColumnOn(4);
-        if (segment == 12) ColumnOn(5);
-        if (segment == 13) ColumnOn(6);
-        if (segment == 14) ColumnOn(7);
-        if (segment == 15) ColumnOn(8);
-        if (segment == 16) ColumnOn(9);
+        ledsBy27Segments(segment);
       }
-      serialDebug("%.2d %.2d %.2d %.2d\n", rangeUp, rangeDown, midiNote, sonar[i].distance);
+      serialDebug("%.2d %.2d %.2d %.3d\n", rangeUp, rangeDown, midiNote, sonar[i].distance);
       
       // voice/note configuration
-      Voice* v = &voices[i];
-      v->octave = ((midiNote - midiNote % 12) / 12) - 1;
-      v->note = ((midiNote % 12) + 2) - 2;
-      v->volume = QUANTIZED_MODE_VELOCITY / 8;
-      if (v->volume > 15) v->volume = 15;
-      v->amp = amp[v->volume];
-      v->freq = scale[v->note] >> (8 - (v->octave % 8));
+      voices[i].octave = ((midiNote - midiNote % 12) / 12) - 1;
+      voices[i].note = ((midiNote % 12) + 2) - 2;
+      voices[i].volume = QUANTIZED_MODE_VELOCITY / 8;
+      if (voices[i].volume > 15) voices[i].volume = 15;
+      voices[i].amp = amp[voices[i].volume];
+      voices[i].freq = scale[voices[i].note] >> (8 - (voices[i].octave % 8));
+    }
+  }
+  if (playingMode == SAMPLES) {
+    for (int i = 0; i < NUM_SONARS; i++) {
+      if (sonar[i].distance < MIN_DISTANCE || sonar[i].distance > MAX_DISTANCE) {
+        RowOff(1); RowOff(2); RowOff(3);
+        ColumnsOff();
+        previousSegment = 0;
+        continue;
+      }
+
+      num_notes = 10;
+      rangeUp = ceil(sonar[i].distance * num_notes / MAX_DISTANCE);
+      rangeDown = ceil((sonar[i].distance + HYSTERESIS_IN_CM) * num_notes / MAX_DISTANCE);
+      if (rangeUp == rangeDown || abs(segment - previousSegment) >= noteJumpDistance) {
+        segment = rangeUp;
+      }
+
+      voices[i].waveform = SAMPLE;
+      if (segment != previousSegment) {
+        if (segment == 2) {
+          serialDebug("kick\n");
+          voices[i].sample = kick;
+          voices[i].sample_size = LEN(kick);
+          voices[i].sample_must_play = true;
+        }
+        if (segment == 3) {
+          serialDebug("hihat\n");
+          voices[i].sample = hihat;
+          voices[i].sample_size = LEN(hihat);
+          voices[i].sample_must_play = true;
+        }
+        if (segment == 4) {
+          serialDebug("snare\n");
+          voices[i].sample = snare;
+          voices[i].sample_size = LEN(snare);
+          voices[i].sample_must_play = true;
+        }
+      }
+      serialDebug("%.2d %.2d %.3d\n", segment, previousSegment, sonar[i].distance);
+      if (segment > 0) previousSegment = segment;
+
+      // leds
+      ColumnsOff();
+      if (segment >= 2 && segment <= 4) {
+        ledsBy10Segments(segment - 1);
+      }
     }
   }
 
@@ -601,6 +661,9 @@ void loop() {
       quantizedModeScale = A_MAJOR;
       serialDebug("quantized - A major");
     } else if (playingMode == QUANTIZED && quantizedModeScale == A_MAJOR) {
+      playingMode = SAMPLES;
+      serialDebug("samples");
+    } else if (playingMode == SAMPLES) {
       playingMode = CONTINUOUS;
       serialDebug("continuous");
     }
@@ -620,45 +683,5 @@ void loop() {
   if (!debugMode) {
     _delay_us(1);
   }
-  
-  // cubeled debug, from cdrfiuba/pcbdesarrollo
-  /*if (nextBigTick) {
-      nextBigTick = false;
-      cubeled_state++;
-      if (cubeled_state == 1) {         ColumnOn(1); 
-                                        RowOff(2); RowOff(3); RowOn(1);
-      } else if (cubeled_state == 2) {  ColumnOff(1); ColumnOn(2);
-      } else if (cubeled_state == 3) {  ColumnOff(2); ColumnOn(3);
-      } else if (cubeled_state == 4) {  ColumnOff(3); ColumnOn(6);
-      } else if (cubeled_state == 5) {  ColumnOff(6); ColumnOn(5);
-      } else if (cubeled_state == 6) {  ColumnOff(5); ColumnOn(4);
-      } else if (cubeled_state == 7) {  ColumnOff(4); ColumnOn(7);
-      } else if (cubeled_state == 8) {  ColumnOff(7); ColumnOn(8);
-      } else if (cubeled_state == 9) {  ColumnOff(8); ColumnOn(9);
-      } else if (cubeled_state == 10) { RowOff(1); RowOn(2);
-      } else if (cubeled_state == 11) { ColumnOff(9); ColumnOn(8);
-      } else if (cubeled_state == 12) { ColumnOff(8); ColumnOn(7);
-      } else if (cubeled_state == 13) { ColumnOff(7); ColumnOn(4);
-      } else if (cubeled_state == 14) { ColumnOff(4); ColumnOn(5);
-      } else if (cubeled_state == 15) { ColumnOff(5); ColumnOn(6);
-      } else if (cubeled_state == 16) { ColumnOff(6); ColumnOn(3);
-      } else if (cubeled_state == 17) { ColumnOff(3); ColumnOn(2);
-      } else if (cubeled_state == 18) { ColumnOff(2); ColumnOn(1);
-      } else if (cubeled_state == 19) { RowOff(2); RowOn(3);
-      } else if (cubeled_state == 20) { ColumnOff(1); ColumnOn(2);
-      } else if (cubeled_state == 21) { ColumnOff(2); ColumnOn(3);
-      } else if (cubeled_state == 22) { ColumnOff(3); ColumnOn(6);
-      } else if (cubeled_state == 23) { ColumnOff(6); ColumnOn(5);
-      } else if (cubeled_state == 24) { ColumnOff(5); ColumnOn(4);
-      } else if (cubeled_state == 25) { ColumnOff(4); ColumnOn(7);
-      } else if (cubeled_state == 26) { ColumnOff(7); ColumnOn(8);
-      } else if (cubeled_state == 27) { ColumnOff(8); ColumnOn(9);
-      } else if (cubeled_state == 28) { RowOff(3); ColumnOff(9);
-                                        RowOn(2);  ColumnOn(5);
-      } else if (cubeled_state == 29) { ColumnOff(5);
-      } else if (cubeled_state == 30) {
-        cubeled_state = 0;
-      }
-  }*/
   
 }
